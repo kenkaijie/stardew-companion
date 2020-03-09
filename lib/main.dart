@@ -35,33 +35,33 @@ class MainPage extends StatefulWidget {
 class _MainPageState extends State<MainPage> {
   WebViewController _webViewController;
 
-  List<String> favourites = new List<String>();
-  bool currentIsFavourite = false; // flag to indicate if the current url is already in the favourites
+  List<String> bookmarks = new List<String>();
+  bool currentIsBookmarked = false; // flag to indicate if the current url is already in the bookmarks list
   bool pageReady = false;
 
   PageSearch _pageSearch;
 
-  void addFavourite(String item) {
-    if (!favourites.contains(item)) {
+  void addBookmark(String item) {
+    if (!bookmarks.contains(item)) {
       setState(() {
-        favourites.add(item);
-        favourites.sort();
-        currentIsFavourite = true;
+        bookmarks.add(item);
+        bookmarks.sort();
+        currentIsBookmarked = true;
       });
     }
   }
 
-  void deleteFavourite(String item) {
-    if (favourites.contains(item)) {
+  void deleteBookmark(String item) {
+    if (bookmarks.contains(item)) {
       setState(() {
-        favourites.remove(item);
-        currentIsFavourite = false;
+        bookmarks.remove(item);
+        currentIsBookmarked = false;
       });
     }
   }
 
-  bool containsFavourite(String item) {
-    return favourites.contains(item);
+  bool containsBookmark(String item) {
+    return bookmarks.contains(item);
   }
 
   Future<List<String>> createSearchItems() async {
@@ -186,7 +186,7 @@ class _MainPageState extends State<MainPage> {
                   onPageFinished: (String url) {
                     setState(() {
                       pageReady = true;
-                      currentIsFavourite = containsFavourite(getPageTitleFromURL(url));
+                      currentIsBookmarked = containsBookmark(getPageTitleFromURL(url));
                     });
                     print('Page finished loading: $url');
                   },
@@ -202,7 +202,7 @@ class _MainPageState extends State<MainPage> {
                 builder: (BuildContext context) {
                   return AppBar(
                     leading: IconButton(
-                      icon: Icon(Icons.bookmark),
+                      icon: Icon(Icons.collections_bookmark),
                       onPressed: () {
                         Scaffold.of(context).openDrawer();
                       },
@@ -229,9 +229,11 @@ class _MainPageState extends State<MainPage> {
                       ),
                       IconButton(
                         padding: EdgeInsets.zero,
-                        icon: Icon(Icons.share),
-                        onPressed: _shareCurrentPage,
-                      )
+                        icon: Icon(Icons.home),
+                        onPressed: () async {
+                          await navigateTo(getURLFromPageTitle("Stardew_Valley_Wiki"));
+                        },
+                      ),
                     ],
                     // This drop down menu demonstrates that Flutter widgets can be shown over the web view.
                   );
@@ -250,11 +252,8 @@ class _MainPageState extends State<MainPage> {
                 padding: EdgeInsets.only(
                     top: MediaQuery.of(context).padding.top + 16.0, bottom: 16.0),
                 child: ListTile(
-                  leading: Icon(
-                      Icons.favorite,
-                      color: Theme.of(context).primaryTextTheme.headline6.color),
                   title: Text(
-                      'Favourites',
+                      'Bookmarks',
                       style: Theme.of(context).primaryTextTheme.headline6),
                 ),
               ),
@@ -262,9 +261,9 @@ class _MainPageState extends State<MainPage> {
               Expanded(
                 child: ListView.builder(
                   padding: EdgeInsets.zero,
-                  itemCount: favourites.length,
+                  itemCount: bookmarks.length,
                   itemBuilder: (context, index) {
-                    String item = favourites[index];
+                    String item = bookmarks[index];
                     return new ListTile(
                       title: Text(item),
                       onTap: () async {
@@ -274,7 +273,7 @@ class _MainPageState extends State<MainPage> {
                       trailing: IconButton(
                         icon: Icon(Icons.clear),
                         onPressed: () {
-                          deleteFavourite(item);
+                          deleteBookmark(item);
                         },
                       ),
                     );
@@ -292,31 +291,29 @@ class _MainPageState extends State<MainPage> {
               animatedIconTheme: IconThemeData(size: 22.0),
               children: <SpeedDialChild>[
                 SpeedDialChild(
-                    child: Icon(Icons.home),
-                    label: 'Home',
-                    labelStyle: TextStyle(fontSize: 18.0),
-                    onTap: () async {
-                      await navigateTo(getURLFromPageTitle("Stardew_Valley_Wiki"));
-                    }
-                ),
-                SpeedDialChild(
-                  child: currentIsFavourite ? Icon(Icons.favorite) : Icon(Icons.favorite_border),
-                  label: currentIsFavourite ? 'Unfavourite' : 'Favourite',
+                  child: currentIsBookmarked ? Icon(Icons.bookmark) : Icon(Icons.bookmark_border),
+                  label: currentIsBookmarked ? 'Remove' : 'Bookmark',
                   labelStyle: TextStyle(fontSize: 18.0),
                   onTap: pageReady ? () async {
                     String pageTitle = await getCurrentPageTitle();
-                    if (currentIsFavourite) {
-                      deleteFavourite(pageTitle);
+                    if (currentIsBookmarked) {
+                      deleteBookmark(pageTitle);
                       Scaffold.of(context).showSnackBar(SnackBar(
-                          content: Text("Removed $pageTitle to favourites.")
+                          content: Text("Removed $pageTitle to bookmarks.")
                       ));
                     } else {
-                      addFavourite(pageTitle);
+                      addBookmark(pageTitle);
                       Scaffold.of(context).showSnackBar(SnackBar(
-                        content: Text("Added $pageTitle to favourites.")
+                        content: Text("Added $pageTitle to bookmarks.")
                       ));
                     }
                   } : null,
+                ),
+                SpeedDialChild(
+                    child: Icon(Icons.share),
+                    label: 'Share',
+                    labelStyle: TextStyle(fontSize: 18.0),
+                    onTap: _shareCurrentPage
                 ),
               ],
             );
