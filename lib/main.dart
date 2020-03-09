@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter_speed_dial/flutter_speed_dial.dart';
 import 'package:http/http.dart';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'package:autocomplete_textfield/autocomplete_textfield.dart';
 import 'package:share/share.dart';
 
 void main() {
@@ -34,9 +34,35 @@ class MainPage extends StatefulWidget {
 
 class _MainPageState extends State<MainPage> {
   WebViewController _webViewController;
-  final GlobalKey autocompleteKey =
-      new GlobalKey<AutoCompleteTextFieldState<String>>();
-  AutoCompleteTextField<String> _autoCompleteTextField;
+
+  List<String> bookmarks = new List<String>();
+  bool currentIsBookmarked = false; // flag to indicate if the current url is already in the bookmarks list
+  bool pageReady = false;
+
+  PageSearch _pageSearch;
+
+  void addBookmark(String item) {
+    if (!bookmarks.contains(item)) {
+      setState(() {
+        bookmarks.add(item);
+        bookmarks.sort();
+        currentIsBookmarked = true;
+      });
+    }
+  }
+
+  void deleteBookmark(String item) {
+    if (bookmarks.contains(item)) {
+      setState(() {
+        bookmarks.remove(item);
+        currentIsBookmarked = false;
+      });
+    }
+  }
+
+  bool containsBookmark(String item) {
+    return bookmarks.contains(item);
+  }
 
   Future<List<String>> createSearchItems() async {
     List<String> searchTerms = new List<String>();
@@ -78,7 +104,7 @@ class _MainPageState extends State<MainPage> {
   void initState() {
     createSearchItems().then((suggestionList) {
       suggestionList.forEach((suggestion) {
-        _autoCompleteTextField.addSuggestion(suggestion);
+        _pageSearch.addSuggestion(suggestion);
       });
     });
     super.initState();
@@ -92,24 +118,21 @@ class _MainPageState extends State<MainPage> {
     return url.split("https://stardewvalleywiki.com/").last;
   }
 
+  Future<String> getCurrentPageTitle() async {
+    if (_webViewController != null) {
+      return getPageTitleFromURL(await _webViewController.currentUrl());
+    }
+    return null;
+  }
+
   _MainPageState() {
-    _autoCompleteTextField = new SimpleAutoCompleteTextField(
-      decoration: InputDecoration(
-        hintText: "Search Topic",
-        suffixIcon: new Icon(Icons.search),
-      ),
-      textSubmitted: (value) {
-        print("Submitted $value");
-        if (_webViewController != null) {
-          setState(() {
-            _webViewController.loadUrl(getURLFromPageTitle(value));
-          });
-        }
-      },
-      key: autocompleteKey,
-      suggestions: new List<String>(),
-    );
-    currentUrl = getURLFromPageTitle("Stardew_Valley_Wiki");
+    _pageSearch = PageSearch(List<String>(), (String selected, String rawQuery) async {
+      if (selected.startsWith("Search")) {
+        await navigateTo("https://stardewvalleywiki.com/mediawiki/index.php?search=$rawQuery&fulltext=search");
+      } else {
+        await navigateTo(getURLFromPageTitle(selected));
+      }
+    });
   }
 
   void _shareCurrentPage() async {
@@ -120,115 +143,269 @@ class _MainPageState extends State<MainPage> {
     Share.share(shareString);
   }
 
-  String currentUrl = "";
-  bool currentFavourite = false;
-  List<String> favourites = new List<String>();
-
-  List<Widget> _buildDrawer(BuildContext context) {
-    List<Widget> widgetList = new List<Widget>();
-    widgetList.add(new DrawerHeader(
-      child: Text("Favourites"),
-    ));
-
-    favourites.forEach((element) {
-      widgetList.add(
-          new ListTile(
-              title: Text(element),
-              trailing: IconButton(
-                onPressed: () {
-                  setState(() {
-                    favourites.remove(element);
-                    currentFavourite = false;
-                  });
-                },
-                icon: Icon(Icons.clear),
-              ),
-              onTap: () {
-                setState(() async {
-                  await _webViewController.loadUrl(
-                      getURLFromPageTitle(element));
-                  Navigator.pop(context);
-                });
-              }
-          )
-      );
-    });
-    return widgetList;
+  Future<void> navigateTo(String url) async {
+    if (_webViewController != null) {
+      await _webViewController.loadUrl(url);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return WillPopScope(
       child: Scaffold(
-        appBar: AppBar(
-          title: _autoCompleteTextField,
-          actions: <Widget>[
-            IconButton(
-              icon: new Icon(Icons.share),
-              onPressed: _shareCurrentPage,
-            )
+        body: Stack(
+          children: <Widget>[
+            Container(
+              padding: EdgeInsets.only(
+                top: 25.0,
+              ),
+              child: Builder(builder: (BuildContext context) {
+                return WebView(
+                  initialUrl: getURLFromPageTitle("Stardew_Valley_Wiki"),
+                  javascriptMode: JavascriptMode.disabled,
+                  onWebViewCreated: (WebViewController webViewController) {
+                    setState(() {
+                      _webViewController = webViewController;
+                    });
+                  },
+                  navigationDelegate: (NavigationRequest request) {
+                    if (!request.url.startsWith('https://stardewvalleywiki.com') || request.url.contains("mobileaction")) {
+                      print('blocking navigation to $request}');
+                      Scaffold.of(context).showSnackBar(new SnackBar(content: Text("Cannot open external sites.")));
+                      return NavigationDecision.prevent;
+                    }
+                    print('allowing navigation to $request');
+                    return NavigationDecision.navigate;
+                  },
+                  onPageStarted: (String url) {
+                    print('Page started loading: $url');
+                    setState(() {
+                      pageReady = false;
+                    });
+                  },
+                  onPageFinished: (String url) {
+                    setState(() {
+                      pageReady = true;
+                      currentIsBookmarked = containsBookmark(getPageTitleFromURL(url));
+                    });
+                    print('Page finished loading: $url');
+                  },
+                  gestureNavigationEnabled: false,
+                );
+              }),
+            ),
+            Positioned(
+              top: 0.0,
+              left: 0.0,
+              right: 0.0,
+              child: Builder(
+                builder: (BuildContext context) {
+                  return AppBar(
+                    leading: IconButton(
+                      icon: Icon(Icons.collections_bookmark),
+                      onPressed: () {
+                        Scaffold.of(context).openDrawer();
+                      },
+                    ),
+                    title: GestureDetector(
+                      child: Text("Search Topics..."),
+                      onTap: () {
+                        showSearch(
+                            context: context,
+                            delegate: _pageSearch
+                        );
+                      },
+                    ),
+                    actions: <Widget>[
+                      IconButton(
+                        padding: EdgeInsets.zero,
+                        icon: Icon(Icons.search),
+                        onPressed: () {
+                          showSearch(
+                              context: context,
+                              delegate: _pageSearch
+                          );
+                        },
+                      ),
+                      IconButton(
+                        padding: EdgeInsets.zero,
+                        icon: Icon(Icons.home),
+                        onPressed: () async {
+                          await navigateTo(getURLFromPageTitle("Stardew_Valley_Wiki"));
+                        },
+                      ),
+                    ],
+                    // This drop down menu demonstrates that Flutter widgets can be shown over the web view.
+                  );
+                },
+              ),
+            ),
           ],
-          // This drop down menu demonstrates that Flutter widgets can be shown over the web view.
         ),
-        body: Builder(builder: (BuildContext context) {
-          return WebView(
-            initialUrl: currentUrl,
-            javascriptMode: JavascriptMode.disabled,
-            onWebViewCreated: (WebViewController webViewController) {
-              setState(() {
-                _webViewController = webViewController;
-              });
-            },
-            navigationDelegate: (NavigationRequest request) {
-              if (!request.url.startsWith('https://stardewvalleywiki.com')) {
-                print('blocking navigation to $request}');
-                return NavigationDecision.prevent;
-              }
-              print('allowing navigation to $request');
-              return NavigationDecision.navigate;
-            },
-            onPageStarted: (String url) {
-              setState(() {
-                currentUrl = url;
-                currentFavourite = favourites.contains(getPageTitleFromURL(currentUrl));
-              });
-              print('Page started loading: $url');
-            },
-            onPageFinished: (String url) {
-              print('Page finished loading: $url');
-            },
-            gestureNavigationEnabled: false,
-          );
-        }),
         drawer: Drawer(
-          child: ListView(
-            padding: EdgeInsets.zero,
-            children: _buildDrawer(context),
-          )
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Container(
+                color: Theme.of(context).primaryColor,
+                padding: EdgeInsets.only(
+                    top: MediaQuery.of(context).padding.top + 16.0, bottom: 16.0),
+                child: ListTile(
+                  title: Text(
+                      'Bookmarks',
+                      style: Theme.of(context).primaryTextTheme.headline6),
+                ),
+              ),
+
+              Expanded(
+                child: ListView.builder(
+                  padding: EdgeInsets.zero,
+                  itemCount: bookmarks.length,
+                  itemBuilder: (context, index) {
+                    String item = bookmarks[index];
+                    return new ListTile(
+                      title: Text(item),
+                      onTap: () async {
+                        Navigator.pop(context);
+                        await navigateTo(getURLFromPageTitle(item));
+                      },
+                      trailing: IconButton(
+                        icon: Icon(Icons.clear),
+                        onPressed: () {
+                          deleteBookmark(item);
+                        },
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
-        floatingActionButton: new FloatingActionButton(
-          child: currentFavourite ? new Icon(Icons.favorite) : new Icon(Icons.favorite_border),
-            onPressed: () async {
-              setState(() {
-                if (favourites.contains(getPageTitleFromURL(currentUrl))) {
-                  favourites.remove(getPageTitleFromURL(currentUrl));
-                  currentFavourite = false;
-                } else {
-                  favourites.add(getPageTitleFromURL(currentUrl));
-                  favourites.sort();
-                  currentFavourite = true;
-                }
-              });
-        }),
+        floatingActionButton: Builder(
+          builder: (BuildContext context) {
+            return SpeedDial(
+              elevation: 8.0,
+              animatedIcon: AnimatedIcons.menu_close,
+              animatedIconTheme: IconThemeData(size: 22.0),
+              children: <SpeedDialChild>[
+                SpeedDialChild(
+                  child: currentIsBookmarked ? Icon(Icons.bookmark) : Icon(Icons.bookmark_border),
+                  label: currentIsBookmarked ? 'Remove' : 'Bookmark',
+                  labelStyle: TextStyle(fontSize: 18.0),
+                  onTap: pageReady ? () async {
+                    String pageTitle = await getCurrentPageTitle();
+                    if (currentIsBookmarked) {
+                      deleteBookmark(pageTitle);
+                      Scaffold.of(context).showSnackBar(SnackBar(
+                          content: Text("Removed $pageTitle to bookmarks.")
+                      ));
+                    } else {
+                      addBookmark(pageTitle);
+                      Scaffold.of(context).showSnackBar(SnackBar(
+                        content: Text("Added $pageTitle to bookmarks.")
+                      ));
+                    }
+                  } : null,
+                ),
+                SpeedDialChild(
+                    child: Icon(Icons.share),
+                    label: 'Share',
+                    labelStyle: TextStyle(fontSize: 18.0),
+                    onTap: _shareCurrentPage
+                ),
+              ],
+            );
+          },
+        )
       ),
       onWillPop: () async {
-        if (await _webViewController.canGoBack()) {
-          await _webViewController.goBack();
-          return false;
-        } else {
-          return true;
+        if (_webViewController != null) {
+          if (await _webViewController.canGoBack()) {
+            await _webViewController.goBack();
+            return false;
+          }
         }
+        return true;
       },
     );
   }
+}
+
+class PageSearch extends SearchDelegate<String> {
+
+  final List<String> suggestions;
+  final void Function(String selected, String rawQuery) onSelect;
+
+  PageSearch(this.suggestions, this.onSelect);
+
+  void addSuggestion(String value) {
+    if (!suggestions.contains(value)) {
+      suggestions.add(value);
+    }
+  }
+
+  void removeSuggestion(String value) {
+    if (suggestions.contains(value)) {
+      suggestions.remove(value);
+    }
+  }
+
+  @override
+  List<Widget> buildActions(BuildContext context) {
+    return [
+      IconButton(
+        icon: Icon(Icons.clear),
+        onPressed: () {
+          query = '';
+        },
+      )
+    ];
+  }
+
+  @override
+  Widget buildLeading(BuildContext context) {
+    return IconButton(
+      icon: Icon(
+          Icons.arrow_back),
+          onPressed: () {
+            close(context, null);
+          },
+    );
+  }
+
+  @override
+  Widget buildResults(BuildContext context) {
+    // just do the same thing
+    return buildSuggestions(context);
+  }
+
+  @override
+  Widget buildSuggestions(BuildContext context) {
+    if (query == '') {
+      // just return empty
+      return Center(
+        child: Text("Type something to see pages."),
+      );
+    }
+    List<String> filteredStrings = ["Search \"$query\" On Wiki"];
+    filteredStrings.addAll(suggestions.where((item) {
+      return item.toLowerCase().startsWith(query.toLowerCase());
+    }));
+
+    return ListView.builder(
+        itemCount: filteredStrings.length,
+        itemBuilder: (context, index) {
+          return ListTile(
+            title: Text(filteredStrings[index]),
+            onTap: () {
+              close(context, null);
+              onSelect(filteredStrings[index], query);
+            },
+          );
+        }
+    );
+  }
+  
 }
