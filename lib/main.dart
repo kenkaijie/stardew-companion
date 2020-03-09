@@ -34,9 +34,37 @@ class MainPage extends StatefulWidget {
 
 class _MainPageState extends State<MainPage> {
   WebViewController _webViewController;
+
   final GlobalKey autocompleteKey =
       new GlobalKey<AutoCompleteTextFieldState<String>>();
   AutoCompleteTextField<String> _autoCompleteTextField;
+
+  List<String> favourites = new List<String>();
+  bool currentIsFavourite = false; // flag to indicate if the current url is already in the favourites
+  bool pageReady = false;
+
+  void addFavourite(String item) {
+    if (!favourites.contains(item)) {
+      setState(() {
+        favourites.add(item);
+        favourites.sort();
+        currentIsFavourite = true;
+      });
+    }
+  }
+
+  void deleteFavourite(String item) {
+    if (favourites.contains(item)) {
+      setState(() {
+        favourites.remove(item);
+        currentIsFavourite = false;
+      });
+    }
+  }
+
+  bool containsFavourite(String item) {
+    return favourites.contains(item);
+  }
 
   Future<List<String>> createSearchItems() async {
     List<String> searchTerms = new List<String>();
@@ -92,6 +120,13 @@ class _MainPageState extends State<MainPage> {
     return url.split("https://stardewvalleywiki.com/").last;
   }
 
+  Future<String> getCurrentPageTitle() async {
+    if (_webViewController != null) {
+      return getPageTitleFromURL(await _webViewController.currentUrl());
+    }
+    return null;
+  }
+
   _MainPageState() {
     _autoCompleteTextField = new SimpleAutoCompleteTextField(
       decoration: InputDecoration(
@@ -109,7 +144,6 @@ class _MainPageState extends State<MainPage> {
       key: autocompleteKey,
       suggestions: new List<String>(),
     );
-    currentUrl = getURLFromPageTitle("Stardew_Valley_Wiki");
   }
 
   void _shareCurrentPage() async {
@@ -120,40 +154,10 @@ class _MainPageState extends State<MainPage> {
     Share.share(shareString);
   }
 
-  String currentUrl = "";
-  bool currentFavourite = false;
-  List<String> favourites = new List<String>();
-
-  List<Widget> _buildDrawer(BuildContext context) {
-    List<Widget> widgetList = new List<Widget>();
-    widgetList.add(new DrawerHeader(
-      child: Text("Favourites"),
-    ));
-
-    favourites.forEach((element) {
-      widgetList.add(
-          new ListTile(
-              title: Text(element),
-              trailing: IconButton(
-                onPressed: () {
-                  setState(() {
-                    favourites.remove(element);
-                    currentFavourite = false;
-                  });
-                },
-                icon: Icon(Icons.clear),
-              ),
-              onTap: () {
-                setState(() async {
-                  await _webViewController.loadUrl(
-                      getURLFromPageTitle(element));
-                  Navigator.pop(context);
-                });
-              }
-          )
-      );
-    });
-    return widgetList;
+  Future<void> navigateTo(String url) async {
+    if (_webViewController != null) {
+      await _webViewController.loadUrl(url);
+    }
   }
 
   @override
@@ -172,7 +176,7 @@ class _MainPageState extends State<MainPage> {
         ),
         body: Builder(builder: (BuildContext context) {
           return WebView(
-            initialUrl: currentUrl,
+            initialUrl: getURLFromPageTitle("Stardew_Valley_Wiki"),
             javascriptMode: JavascriptMode.disabled,
             onWebViewCreated: (WebViewController webViewController) {
               setState(() {
@@ -182,52 +186,82 @@ class _MainPageState extends State<MainPage> {
             navigationDelegate: (NavigationRequest request) {
               if (!request.url.startsWith('https://stardewvalleywiki.com')) {
                 print('blocking navigation to $request}');
+                Scaffold.of(context).showSnackBar(new SnackBar(content: Text("Cannot open external sites.")));
                 return NavigationDecision.prevent;
               }
               print('allowing navigation to $request');
               return NavigationDecision.navigate;
             },
             onPageStarted: (String url) {
-              setState(() {
-                currentUrl = url;
-                currentFavourite = favourites.contains(getPageTitleFromURL(currentUrl));
-              });
               print('Page started loading: $url');
+              setState(() {
+                pageReady = false;
+              });
             },
             onPageFinished: (String url) {
+              setState(() {
+                pageReady = true;
+                currentIsFavourite = containsFavourite(getPageTitleFromURL(url));
+              });
               print('Page finished loading: $url');
             },
             gestureNavigationEnabled: false,
           );
         }),
         drawer: Drawer(
-          child: ListView(
-            padding: EdgeInsets.zero,
-            children: _buildDrawer(context),
-          )
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              DrawerHeader(
+                padding: EdgeInsets.zero,
+                child: Text("Favourites"),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: favourites.length,
+                  itemBuilder: (context, index) {
+                    String item = favourites[index];
+                    return new ListTile(
+                      title: Text(item),
+                      onTap: () async {
+                        Navigator.pop(context);
+                        await navigateTo(getURLFromPageTitle(item));
+                      },
+                      trailing: IconButton(
+                        icon: Icon(Icons.clear),
+                        onPressed: () {
+                          deleteFavourite(item);
+                        },
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
-        floatingActionButton: new FloatingActionButton(
-          child: currentFavourite ? new Icon(Icons.favorite) : new Icon(Icons.favorite_border),
-            onPressed: () async {
-              setState(() {
-                if (favourites.contains(getPageTitleFromURL(currentUrl))) {
-                  favourites.remove(getPageTitleFromURL(currentUrl));
-                  currentFavourite = false;
-                } else {
-                  favourites.add(getPageTitleFromURL(currentUrl));
-                  favourites.sort();
-                  currentFavourite = true;
-                }
-              });
-        }),
+        floatingActionButton: FloatingActionButton(
+
+          child: currentIsFavourite ? Icon(Icons.favorite) : Icon(Icons.favorite_border),
+          onPressed: pageReady ? () async {
+            String pageTitle = await getCurrentPageTitle();
+            if (currentIsFavourite) {
+              deleteFavourite(pageTitle);
+            } else {
+              addFavourite(pageTitle);
+            }
+          } : null,
+        )
       ),
       onWillPop: () async {
-        if (await _webViewController.canGoBack()) {
-          await _webViewController.goBack();
-          return false;
-        } else {
-          return true;
+        if (_webViewController != null) {
+          if (await _webViewController.canGoBack()) {
+            await _webViewController.goBack();
+            return false;
+          }
         }
+        return true;
       },
     );
   }
