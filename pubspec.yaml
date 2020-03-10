@@ -46,6 +46,7 @@ flutter_icons:
 flutter_native_splash:
   image: "assets/images/splash.png"
   color: "#607d8b"
+  android_disable_fullscreen: true
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
