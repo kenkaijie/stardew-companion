@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_speed_dial/flutter_speed_dial.dart';
 import 'package:http/http.dart';
 import 'package:flutter/material.dart';
+import 'package:stardewcompanion/persistent_store.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:share/share.dart';
 
@@ -41,18 +42,19 @@ class _MainPageState extends State<MainPage> {
 
   PageSearch _pageSearch;
 
-  void addBookmark(String item) {
-    if (!bookmarks.contains(item)) {
+  Future<void> addBookmark(String item) async {
+    if (!containsBookmark(item)) {
+     await PersistentStore.instance.addBookmark(item);
       setState(() {
         bookmarks.add(item);
-        bookmarks.sort();
         currentIsBookmarked = true;
       });
     }
   }
 
-  void deleteBookmark(String item) {
-    if (bookmarks.contains(item)) {
+  Future<void> deleteBookmark(String item) async {
+    if (containsBookmark(item)) {
+      await PersistentStore.instance.deleteBookmark(item);
       setState(() {
         bookmarks.remove(item);
         currentIsBookmarked = false;
@@ -100,6 +102,8 @@ class _MainPageState extends State<MainPage> {
     }
   }
 
+  Future<List<String>> bookmarksFuture;
+
   @override
   void initState() {
     createSearchItems().then((suggestionList) {
@@ -107,6 +111,9 @@ class _MainPageState extends State<MainPage> {
         _pageSearch.addSuggestion(suggestion);
       });
     });
+
+    bookmarksFuture = PersistentStore.instance.getStoredBookmarks();
+
     super.initState();
   }
 
@@ -259,24 +266,35 @@ class _MainPageState extends State<MainPage> {
               ),
 
               Expanded(
-                child: ListView.builder(
-                  padding: EdgeInsets.zero,
-                  itemCount: bookmarks.length,
-                  itemBuilder: (context, index) {
-                    String item = bookmarks[index];
-                    return new ListTile(
-                      title: Text(item),
-                      onTap: () async {
-                        Navigator.pop(context);
-                        await navigateTo(getURLFromPageTitle(item));
-                      },
-                      trailing: IconButton(
-                        icon: Icon(Icons.clear),
-                        onPressed: () {
-                          deleteBookmark(item);
+                child: FutureBuilder<List<String>>(
+                  future: bookmarksFuture,
+                  initialData: new List<String>(),
+                  builder: (BuildContext context, AsyncSnapshot<List<String>> snapshot) {
+                    if (snapshot.connectionState == ConnectionState.done) {
+                      bookmarks = snapshot.data;
+                      return ListView.builder(
+                        padding: EdgeInsets.zero,
+                        itemCount: bookmarks.length,
+                        itemBuilder: (context, index) {
+                          String item = bookmarks[index];
+                          return new ListTile(
+                            title: Text(item),
+                            onTap: () async {
+                              Navigator.pop(context);
+                              await navigateTo(getURLFromPageTitle(item));
+                            },
+                            trailing: IconButton(
+                              icon: Icon(Icons.clear),
+                              onPressed: () async {
+                                await deleteBookmark(item);
+                              },
+                            ),
+                          );
                         },
-                      ),
-                    );
+                      );
+                    } else {
+                      return CircularProgressIndicator();
+                    }
                   },
                 ),
               ),
@@ -297,12 +315,12 @@ class _MainPageState extends State<MainPage> {
                   onTap: pageReady ? () async {
                     String pageTitle = await getCurrentPageTitle();
                     if (currentIsBookmarked) {
-                      deleteBookmark(pageTitle);
+                      await deleteBookmark(pageTitle);
                       Scaffold.of(context).showSnackBar(SnackBar(
                           content: Text("Removed $pageTitle to bookmarks.")
                       ));
                     } else {
-                      addBookmark(pageTitle);
+                      await addBookmark(pageTitle);
                       Scaffold.of(context).showSnackBar(SnackBar(
                         content: Text("Added $pageTitle to bookmarks.")
                       ));
