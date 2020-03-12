@@ -36,83 +36,89 @@ class MainPage extends StatefulWidget {
 class _MainPageState extends State<MainPage> {
   WebViewController _webViewController;
 
-  List<String> bookmarks = new List<String>();
   bool currentIsBookmarked = false; // flag to indicate if the current url is already in the bookmarks list
   bool pageReady = false;
-
-  PageSearch _pageSearch;
-
-  Future<void> addBookmark(String item) async {
-    if (!containsBookmark(item)) {
-     await PersistentStore.instance.addBookmark(item);
-      setState(() {
-        bookmarks.add(item);
-        currentIsBookmarked = true;
-      });
-    }
-  }
-
-  Future<void> deleteBookmark(String item) async {
-    if (containsBookmark(item)) {
-      await PersistentStore.instance.deleteBookmark(item);
-      setState(() {
-        bookmarks.remove(item);
-        currentIsBookmarked = false;
-      });
-    }
-  }
-
-  bool containsBookmark(String item) {
-    return bookmarks.contains(item);
-  }
+  Stream<List<PageBookmark>> bookmarksStream;
+  Stream<SearchSuggestions> searchSuggestionsStream;
 
   Future<List<String>> createSearchItems() async {
     List<String> searchTerms = new List<String>();
     String continueToken = "";
-    while (continueToken != null) {
-      continueToken =
-          await getPagesLimited(searchTerms, continueToken: continueToken);
+    do {
+      continueToken = await getPagesLimited(searchTerms, continueToken: continueToken);
+    } while (continueToken != null && continueToken != "");
+
+    if (continueToken == "") {
+     return searchTerms;
+    } else {
+      return [];
     }
-    return searchTerms;
   }
 
-  Future<String> getPagesLimited(List<String> saveObjectList,
-      {String continueToken = ""}) async {
-    Response response = await get(
-        "https://stardewvalleywiki.com/mediawiki/api.php?action=query&format=json&list=allpages&aplimit=500&continue=&apcontinue=$continueToken");
-    Map<String, dynamic> parsed = json.decode(response.body);
+  Future<String> getPagesLimited(List<String> saveObjectList, {String continueToken = ""}) async {
+    try {
+      Response response = await get(
+          "https://stardewvalleywiki.com/mediawiki/api.php?action=query&format=json&list=allpages&aplimit=500&continue=&apcontinue=$continueToken")
+          .timeout(Duration(seconds: 30));
+      Map<String, dynamic> parsed = json.decode(response.body);
 
-    if (response.statusCode != 200) {
-      return null;
-    }
+      if (response.statusCode != 200) {
+        return null;
+      }
 
-    if (parsed.containsKey('error') || !parsed.containsKey('query')) {
-      return null;
-    } else {
-      parsed['query']["allpages"].forEach((item) {
-        print(item);
-        saveObjectList.add(item['title']);
-      });
-      if (!parsed.containsKey('continue')) {
-        // we know we are at the last one
+      if (parsed.containsKey('error') || !parsed.containsKey('query')) {
         return null;
       } else {
-        return parsed['continue']['apcontinue'];
+        parsed['query']["allpages"].forEach((item) {
+          print(item);
+          saveObjectList.add(item['title']);
+        });
+        if (!parsed.containsKey('continue')) {
+          // we know we are at the last one
+          return "";
+        } else {
+          return parsed['continue']['apcontinue'];
+        }
       }
+
+    } catch (e, stackTrace) {
+      print("HTTP request timed out");
+      print(e);
+      print(stackTrace);
     }
+
+    return null;
   }
 
-  Future<List<String>> bookmarksFuture;
+  Future<void> refreshSuggestions() async {
+    var suggestions = await createSearchItems();
+    if (suggestions.length != 0) {
+      await PersistentStore.instance.updateSearchSuggestions(
+          SearchSuggestions(DateTime.now().millisecondsSinceEpoch, suggestions));
+    }
+  }
 
   @override
   void initState() {
-    createSearchItems().then((suggestionList) {
-      suggestionList.forEach((suggestion) {
-        _pageSearch.addSuggestion(suggestion);
-      });
+
+    PersistentStore.instance.getStoredBookmarks();
+    PersistentStore.instance.getSearchSuggestions();
+
+    searchSuggestionsStream = PersistentStore.instance.searchSuggestionsController.stream;
+
+    searchSuggestionsStream.first.then((event) async {
+      int currentTimestamp = DateTime.now().millisecondsSinceEpoch;
+//      int maximumCacheStoreTime = Duration.millisecondsPerDay * 1;
+      int maximumCacheStoreTime = 0;
+      if (event == SearchSuggestions.empty || (currentTimestamp - event.cachedTimestamp) >= maximumCacheStoreTime ) {
+        // we dont have a cache, we will attempt to update it
+        await refreshSuggestions();
+      }
     });
 
-    bookmarksFuture = PersistentStore.instance.getStoredBookmarks();
+    bookmarksStream = PersistentStore.instance.bookmarksStreamController.stream.map((Map<int, PageBookmark> element) {
+      return element.values.toList();
+    });
 
     super.initState();
   }
@@ -132,16 +138,6 @@ class _MainPageState extends State<MainPage> {
     return null;
   }
 
-  _MainPageState() {
-    _pageSearch = PageSearch(List<String>(), (String selected, String rawQuery) async {
-      if (selected.startsWith("Search")) {
-        await navigateTo("https://stardewvalleywiki.com/mediawiki/index.php?search=$rawQuery&fulltext=search");
-      } else {
-        await navigateTo(getURLFromPageTitle(selected));
-      }
-    });
-  }
-
   void _shareCurrentPage() async {
     String shareString = "https//www.stardewvalleywiki.com";
     if (_webViewController != null) {
@@ -153,6 +149,14 @@ class _MainPageState extends State<MainPage> {
   Future<void> navigateTo(String url) async {
     if (_webViewController != null) {
       await _webViewController.loadUrl(url);
+    }
+  }
+
+  Future<void> navigateToPage(String selected, String rawQuery) async {
+    if (selected.startsWith("Search")) {
+      await navigateTo("https://stardewvalleywiki.com/mediawiki/index.php?search=$rawQuery&fulltext=search");
+    } else {
+      await navigateTo(getURLFromPageTitle(selected));
     }
   }
 
@@ -190,10 +194,11 @@ class _MainPageState extends State<MainPage> {
                       pageReady = false;
                     });
                   },
-                  onPageFinished: (String url) {
+                  onPageFinished: (String url) async {
+                    bool isBookmarked = await PersistentStore.instance.containsBookmark(PageBookmark(getPageTitleFromURL(url)));
                     setState(() {
                       pageReady = true;
-                      currentIsBookmarked = containsBookmark(getPageTitleFromURL(url));
+                      currentIsBookmarked = isBookmarked;
                     });
                     print('Page finished loading: $url');
                   },
@@ -205,8 +210,16 @@ class _MainPageState extends State<MainPage> {
               top: 0.0,
               left: 0.0,
               right: 0.0,
-              child: Builder(
-                builder: (BuildContext context) {
+              child: StreamBuilder<SearchSuggestions>(
+                stream: searchSuggestionsStream,
+                initialData: SearchSuggestions.empty,
+                builder: (BuildContext context, AsyncSnapshot<SearchSuggestions> snapshot) {
+                  SearchSuggestions suggestions;
+                  if (snapshot.hasData) {
+                    suggestions = snapshot.data;
+                  } else {
+                    suggestions = SearchSuggestions.empty;
+                  }
                   return AppBar(
                     leading: IconButton(
                       icon: Icon(Icons.collections_bookmark),
@@ -219,9 +232,13 @@ class _MainPageState extends State<MainPage> {
                       onTap: () {
                         showSearch(
                             context: context,
-                            delegate: _pageSearch
+                            delegate: PageSearch(
+                                suggestions.suggestions,
+                                onSelect: navigateToPage,
+                                onRefreshSuggestions: refreshSuggestions,
+                            )
                         );
-                      },
+                      }
                     ),
                     actions: <Widget>[
                       IconButton(
@@ -230,7 +247,11 @@ class _MainPageState extends State<MainPage> {
                         onPressed: () {
                           showSearch(
                               context: context,
-                              delegate: _pageSearch
+                              delegate: PageSearch(
+                                  suggestions.suggestions,
+                                  onSelect: navigateToPage,
+                                  onRefreshSuggestions: refreshSuggestions,
+                              )
                           );
                         },
                       ),
@@ -266,43 +287,50 @@ class _MainPageState extends State<MainPage> {
               ),
 
               Expanded(
-                child: FutureBuilder<List<String>>(
-                  future: bookmarksFuture,
-                  initialData: new List<String>(),
-                  builder: (BuildContext context, AsyncSnapshot<List<String>> snapshot) {
-                    if (snapshot.connectionState == ConnectionState.done) {
-                      bookmarks = snapshot.data;
-                      return ListView.builder(
-                        padding: EdgeInsets.zero,
-                        itemCount: bookmarks.length,
-                        itemBuilder: (context, index) {
-                          String item = bookmarks[index];
-                          return new ListTile(
-                            title: Text(item),
-                            onTap: () async {
-                              Navigator.pop(context);
-                              await navigateTo(getURLFromPageTitle(item));
-                            },
-                            trailing: IconButton(
-                              icon: Icon(Icons.clear),
-                              onPressed: () async {
-                                await deleteBookmark(item);
+                child: StreamBuilder<List<PageBookmark>>(
+                  stream: bookmarksStream,
+                  builder: (BuildContext context, AsyncSnapshot<List<PageBookmark>> snapshot) {
+                    if (snapshot.hasData) {
+                      if (snapshot.data.length > 0) {
+                        return ListView.builder(
+                          padding: EdgeInsets.zero,
+                          itemCount: snapshot.data.length,
+                          itemBuilder: (context, index) {
+                            PageBookmark bookmark = snapshot.data[index];
+                            return new ListTile(
+                              title: Text(bookmark.pageTitle),
+                              onTap: () async {
+                                Navigator.pop(context);
+                                await navigateTo(
+                                    getURLFromPageTitle(bookmark.pageTitle));
                               },
-                            ),
-                          );
-                        },
-                      );
+                              trailing: IconButton(
+                                icon: Icon(Icons.clear),
+                                onPressed: () async {
+                                  await PersistentStore.instance.deleteBookmark(
+                                      bookmark);
+                                },
+                              ),
+                            );
+                          },
+                        );
+                      } else {
+                        return Center(
+                          child: Text("Bookmark a page to view it here."),
+                        );
+                      }
                     } else {
                       return CircularProgressIndicator();
                     }
                   },
+                  initialData: [],
                 ),
               ),
             ],
           ),
         ),
         floatingActionButton: Builder(
-          builder: (BuildContext context) {
+          builder: (context) {
             return SpeedDial(
               elevation: 8.0,
               animatedIcon: AnimatedIcons.menu_close,
@@ -315,14 +343,20 @@ class _MainPageState extends State<MainPage> {
                   onTap: pageReady ? () async {
                     String pageTitle = await getCurrentPageTitle();
                     if (currentIsBookmarked) {
-                      await deleteBookmark(pageTitle);
+                      await PersistentStore.instance.deleteBookmark(PageBookmark(pageTitle));
                       Scaffold.of(context).showSnackBar(SnackBar(
                           content: Text("Removed $pageTitle to bookmarks.")
                       ));
+                      setState(() {
+                        currentIsBookmarked = false;
+                      });
                     } else {
-                      await addBookmark(pageTitle);
+                      setState(() {
+                        currentIsBookmarked = true;
+                      });
+                      await PersistentStore.instance.addBookmark(PageBookmark(pageTitle));
                       Scaffold.of(context).showSnackBar(SnackBar(
-                        content: Text("Added $pageTitle to bookmarks.")
+                          content: Text("Added $pageTitle to bookmarks.")
                       ));
                     }
                   } : null,
@@ -355,20 +389,8 @@ class PageSearch extends SearchDelegate<String> {
 
   final List<String> suggestions;
   final void Function(String selected, String rawQuery) onSelect;
-
-  PageSearch(this.suggestions, this.onSelect);
-
-  void addSuggestion(String value) {
-    if (!suggestions.contains(value)) {
-      suggestions.add(value);
-    }
-  }
-
-  void removeSuggestion(String value) {
-    if (suggestions.contains(value)) {
-      suggestions.remove(value);
-    }
-  }
+  final void Function() onRefreshSuggestions;
+  PageSearch(this.suggestions, {this.onSelect, this.onRefreshSuggestions});
 
   @override
   List<Widget> buildActions(BuildContext context) {
@@ -378,7 +400,15 @@ class PageSearch extends SearchDelegate<String> {
         onPressed: () {
           query = '';
         },
-      )
+      ),
+      IconButton(
+        icon: Icon(Icons.refresh),
+        onPressed: () {
+          if (onRefreshSuggestions != null) {
+            onRefreshSuggestions();
+          }
+        },
+      ),
     ];
   }
 
@@ -404,7 +434,7 @@ class PageSearch extends SearchDelegate<String> {
     if (query == '') {
       // just return empty
       return Center(
-        child: Text("Type something to see pages."),
+        child: Text("Type something to see suggestions."),
       );
     }
     List<String> filteredStrings = ["Search \"$query\" On Wiki"];
@@ -419,11 +449,12 @@ class PageSearch extends SearchDelegate<String> {
             title: Text(filteredStrings[index]),
             onTap: () {
               close(context, null);
-              onSelect(filteredStrings[index], query);
+              if (onSelect != null) {
+                onSelect(filteredStrings[index], query);
+              }
             },
           );
         }
     );
   }
-  
 }
