@@ -37,7 +37,7 @@ class _MainPageState extends State<MainPage> {
   WebViewController _webViewController;
 
   bool currentIsBookmarked = false; // flag to indicate if the current url is already in the bookmarks list
-  bool pageReady = false;
+  String currentUrl;
   Stream<List<PageBookmark>> bookmarksStream;
   Stream<SearchSuggestions> searchSuggestionsStream;
 
@@ -100,9 +100,6 @@ class _MainPageState extends State<MainPage> {
 
   @override
   void initState() {
-
-    PersistentStore.instance.getStoredBookmarks();
-    PersistentStore.instance.getSearchSuggestions();
 
     searchSuggestionsStream = PersistentStore.instance.searchSuggestionsController.stream;
 
@@ -191,13 +188,13 @@ class _MainPageState extends State<MainPage> {
                   onPageStarted: (String url) {
                     print('Page started loading: $url');
                     setState(() {
-                      pageReady = false;
+                      currentUrl = null;
                     });
                   },
                   onPageFinished: (String url) async {
                     bool isBookmarked = await PersistentStore.instance.containsBookmark(PageBookmark(getPageTitleFromURL(url)));
                     setState(() {
-                      pageReady = true;
+                      currentUrl = getPageTitleFromURL(url);
                       currentIsBookmarked = isBookmarked;
                     });
                     print('Page finished loading: $url');
@@ -329,8 +326,11 @@ class _MainPageState extends State<MainPage> {
             ],
           ),
         ),
-        floatingActionButton: Builder(
-          builder: (context) {
+        floatingActionButton: StreamBuilder<List<PageBookmark>>(
+          stream: bookmarksStream,
+          builder: (BuildContext context, AsyncSnapshot<List<PageBookmark>> snapshot) {
+            bool currentIsBookmarked = snapshot.hasData && (currentUrl != null) && (snapshot.data.firstWhere((element) => element.pageTitle == currentUrl, orElse: () => null) != null);
+
             return SpeedDial(
               elevation: 8.0,
               animatedIcon: AnimatedIcons.menu_close,
@@ -340,7 +340,7 @@ class _MainPageState extends State<MainPage> {
                   child: currentIsBookmarked ? Icon(Icons.bookmark) : Icon(Icons.bookmark_border),
                   label: currentIsBookmarked ? 'Remove' : 'Bookmark',
                   labelStyle: TextStyle(fontSize: 18.0),
-                  onTap: pageReady ? () async {
+                  onTap: (currentUrl != null) ? () async {
                     String pageTitle = await getCurrentPageTitle();
                     if (currentIsBookmarked) {
                       await PersistentStore.instance.deleteBookmark(PageBookmark(pageTitle));
