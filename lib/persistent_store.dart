@@ -4,6 +4,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sembast/sembast_io.dart';
 import "package:sembast/sembast.dart";
 import 'package:path/path.dart';
+import 'package:rxdart/rxdart.dart';
 
 class PageBookmark {
   final String pageTitle;
@@ -69,7 +70,7 @@ class PersistentStore {
   final DatabaseFactory _dbFactory = databaseFactoryIo;
   final StoreRef<int, Map<String, dynamic>> _bookmarksStore = intMapStoreFactory.store('bookmarks');
   Map<int, PageBookmark> _bookmarksCache = new Map<int, PageBookmark>();
-  final StreamController<Map<int, PageBookmark>> bookmarksStreamController = new StreamController<Map<int, PageBookmark>>.broadcast();
+  final BehaviorSubject<Map<int, PageBookmark>> bookmarksStreamController = new BehaviorSubject<Map<int, PageBookmark>>.seeded({});
 
   Future<void> addBookmark(PageBookmark item) async {
     Map<String, dynamic> dbEntry =  item.toMap();
@@ -117,7 +118,7 @@ class PersistentStore {
   // for accessors, the search suggestions should only ever store the latest, along with a time stamp
 
   SearchSuggestions _searchSuggestionsCache = SearchSuggestions.empty;
-  final StreamController<SearchSuggestions> searchSuggestionsController = new StreamController<SearchSuggestions>.broadcast();
+  final BehaviorSubject<SearchSuggestions> searchSuggestionsController = new BehaviorSubject<SearchSuggestions>();
   bool _isSearchSuggestionsCached = false;
 
   Future<void> updateSearchSuggestions(SearchSuggestions newSuggestions) async {
