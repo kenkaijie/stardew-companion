@@ -36,7 +36,6 @@ class MainPage extends StatefulWidget {
 class _MainPageState extends State<MainPage> {
   WebViewController _webViewController;
 
-  bool currentIsBookmarked = false; // flag to indicate if the current url is already in the bookmarks list
   String currentUrl;
   Stream<List<PageBookmark>> bookmarksStream;
   Stream<SearchSuggestions> searchSuggestionsStream;
@@ -186,16 +185,14 @@ class _MainPageState extends State<MainPage> {
                     return NavigationDecision.navigate;
                   },
                   onPageStarted: (String url) {
-                    print('Page started loading: $url');
                     setState(() {
                       currentUrl = null;
                     });
+
                   },
                   onPageFinished: (String url) async {
-                    bool isBookmarked = await PersistentStore.instance.containsBookmark(PageBookmark(getPageTitleFromURL(url)));
                     setState(() {
                       currentUrl = getPageTitleFromURL(url);
-                      currentIsBookmarked = isBookmarked;
                     });
                     print('Page finished loading: $url');
                   },
